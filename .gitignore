@@ -1,0 +1,15 @@
+# Pilot / runtime output. Artifacts are reproducible by re-running the
+# fixtures; we deliberately do not commit them so cost/session_id/timing
+# noise stays out of history.
+runs/
+runs-sh/
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+*.swp
+*.bak
+*~
+
+# PowerShell transient
+*.ps1.bak

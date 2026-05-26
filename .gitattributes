@@ -1,0 +1,14 @@
+# Default: detect text vs binary, store with LF in the repo.
+* text=auto eol=lf
+
+# PowerShell scripts run on Windows; check them out with CRLF.
+*.ps1 text eol=crlf
+
+# Shell scripts MUST stay LF — CRLF breaks the shebang.
+*.sh  text eol=lf
+
+# JSON / Schema files are tooling-consumed; LF keeps cross-platform diffs clean.
+*.json text eol=lf
+
+# Markdown: portable LF.
+*.md   text eol=lf

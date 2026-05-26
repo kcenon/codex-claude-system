@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codex-claude-system.local/schemas/worker-result.schema.json",
+  "title": "Codex-to-Claude Worker Result",
+  "description": "Normalized worker result handed back to the Codex aggregator. Produced by the wrapper from Claude's final result event plus locally observed signals (diff, verification exit codes). Direct port of worker-contracts.md draft at lines 96-155, with annotations added.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "task_id",
+    "status",
+    "summary",
+    "changed_files",
+    "commands_run",
+    "risks",
+    "needs_human_review",
+    "notes_for_codex"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Must match the dispatched task spec's task_id. The aggregator rejects any result whose task_id does not correspond to a dispatched task."
+    },
+    "session_id": {
+      "type": "string",
+      "description": "Claude session UUID. Captured from the system/init event so the conversation can be resumed via --resume or --session-id."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["succeeded", "failed", "blocked", "needs-review"],
+      "description": "Wrapper-determined outcome. \"succeeded\" requires claude_meta.subtype == \"success\" AND every entry in changed_files lies inside the task's allowed_paths AND every verification_commands entry exited 0."
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One- or two-sentence description of what the worker actually did."
+    },
+    "changed_files": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "description": "Files modified during the run (paths relative to the workspace). Reconciled against the actual git diff by the wrapper before the result is emitted."
+    },
+    "commands_run": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "exit_code"],
+        "properties": {
+          "command": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Verification command, exactly as executed."
+          },
+          "exit_code": {
+            "type": "integer",
+            "description": "Process exit code. Zero is success unless the command itself documents otherwise."
+          },
+          "summary": {
+            "type": "string",
+            "description": "Optional one-line interpretation of the command output."
+          }
+        }
+      },
+      "description": "Every verification_commands entry actually executed, with its exit code. Commands skipped (with reason) belong in notes_for_codex."
+    },
+    "risks": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Outstanding risks the worker identified that are not resolved by this task. Empty array if none."
+    },
+    "needs_human_review": {
+      "type": "boolean",
+      "description": "Set when the worker is uncertain or when the diff exceeds what was clearly authorized. Overrides status == \"succeeded\" for downstream gating."
+    },
+    "notes_for_codex": {
+      "type": "string",
+      "description": "Free-form notes to the aggregator: constraints a follow-up worker must respect, skipped verification commands and why, observed environment quirks. Must not contain secrets."
+    },
+    "claude_meta": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Selected fields lifted from Claude's final result event so the aggregator can distinguish failure modes without re-reading the raw event log.",
+      "properties": {
+        "subtype": {
+          "type": "string",
+          "enum": [
+            "success",
+            "error_max_turns",
+            "error_during_execution",
+            "error_max_budget_usd",
+            "error_max_structured_output_retries"
+          ],
+          "description": "Claude result.subtype. \"error_max_structured_output_retries\" specifically signals --json-schema could not be satisfied; do not blind-retry on this value."
+        },
+        "terminal_reason": {
+          "type": "string",
+          "enum": [
+            "completed",
+            "max_turns",
+            "tool_deferred",
+            "aborted_streaming",
+            "aborted_tools",
+            "hook_stopped",
+            "stop_hook_prevented",
+            "blocking_limit",
+            "rapid_refill_breaker",
+            "prompt_too_long",
+            "image_error",
+            "model_error"
+          ],
+          "description": "Claude result.terminal_reason. Distinguishes, e.g., a max_turns timeout from a hook_stopped abort."
+        },
+        "total_cost_usd": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Cost reported by Claude for this single worker invocation."
+        },
+        "permission_denials": {
+          "type": "array",
+          "description": "Claude SDKPermissionDenial entries. Field-level shape is only formalized in SDK typings; treat opaquely. Non-empty under dontAsk warrants status == \"blocked\", not auto-escalation."
+        }
+      }
+    }
+  }
+}

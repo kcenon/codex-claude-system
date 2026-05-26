@@ -1,0 +1,47 @@
+{
+  "task_id": "T-0001",
+  "title": "List files in docs/references/",
+  "kind": "analysis",
+  "role": "reader",
+  "workspace": "E:/Sources/codex-claude-system",
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "allowed_paths": [
+    "docs/references/"
+  ],
+  "forbidden_paths": [
+    ".env",
+    ".env.*",
+    ".git/",
+    ".claude/",
+    ".codex/",
+    "id_rsa",
+    "id_ed25519",
+    "*.pem",
+    "*.key"
+  ],
+  "permission_mode": "dontAsk",
+  "tools": [
+    "Read",
+    "Glob",
+    "Grep"
+  ],
+  "allowed_tools": [
+    "Read",
+    "Glob",
+    "Grep"
+  ],
+  "disallowed_tools": [
+    "Bash",
+    "Edit",
+    "Write"
+  ],
+  "definition_of_done": [
+    "Enumerate the files directly inside docs/references/.",
+    "Return their basenames in alphabetical order.",
+    "Do not read file contents."
+  ],
+  "verification_commands": [],
+  "handoff_notes": "First pilot worker for codex-claude-system Phase 3. Read-only investigator. The result will be validated against schemas/worker-result.schema.json by the wrapper.",
+  "max_turns": 4,
+  "max_budget_usd": 0.25
+}

@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codex-claude-system.local/schemas/task-spec.schema.json",
+  "title": "Codex-to-Claude Worker Task Specification",
+  "description": "Structured task spec dispatched by a Codex orchestrator to a Claude Code worker. Derived from worker-contracts.md \"Worker calling contract\" (table at lines 11-30) and the example in architecture.md lines 123-168.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "task_id",
+    "role",
+    "workspace",
+    "allowed_paths",
+    "forbidden_paths",
+    "permission_mode",
+    "allowed_tools",
+    "disallowed_tools",
+    "definition_of_done",
+    "verification_commands"
+  ],
+  "properties": {
+    "task_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique, orchestrator-minted task identifier (e.g. T-0007)."
+    },
+    "title": {
+      "type": "string",
+      "description": "Human-readable summary of the task."
+    },
+    "kind": {
+      "type": "string",
+      "description": "Optional classification (e.g. test, refactor, doc, analysis). Informational; does not drive policy."
+    },
+    "role": {
+      "type": "string",
+      "enum": ["reader", "implementer", "tester", "reviewer"],
+      "description": "Worker role; drives the default permission template."
+    },
+    "workspace": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Working directory. For a write task this is typically a per-task git worktree path (e.g. .claude/worktrees/T-0007)."
+    },
+    "session_id": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "description": "Optional UUID minted by Codex so the Claude conversation can be resumed via --session-id / --resume."
+    },
+    "allowed_paths": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1,
+      "uniqueItems": true,
+      "description": "Paths the worker may read or write. Verified against changed_files in the result."
+    },
+    "forbidden_paths": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "description": "Paths the worker must not touch. Always includes secrets and global agent config (.env, .git/, .claude/, .codex/)."
+    },
+    "permission_mode": {
+      "type": "string",
+      "enum": ["default", "acceptEdits", "plan", "auto", "dontAsk", "bypassPermissions"],
+      "description": "Claude permission mode. For unattended workers, only acceptEdits, plan, and dontAsk are normally selected; default and auto are unsafe in -p mode per security.md."
+    },
+    "tools": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "description": "Closed set of Claude built-in tools the worker may see (--tools). Omit to inherit Claude defaults."
+    },
+    "allowed_tools": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "description": "Pre-approved tool invocations (--allowedTools). Bash invocations use the scoped form, e.g. Bash(npm test *)."
+    },
+    "disallowed_tools": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "description": "Denied tool invocations (--disallowedTools). Should always include Bash(git push *), Bash(git reset *), Bash(rm *) by default."
+    },
+    "definition_of_done": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1,
+      "description": "Plain-English completion criteria. Each entry should be machine-checkable when possible."
+    },
+    "verification_commands": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Commands the worker (or wrapper) must run before declaring succeeded. Empty for pure reader roles."
+    },
+    "output_schema": {
+      "type": "string",
+      "description": "Path to a JSON Schema enforced via --json-schema. The wrapper also validates the parsed result against worker-result.schema.json."
+    },
+    "handoff_notes": {
+      "type": "string",
+      "description": "Background context Codex hands to the worker so it need not re-derive it. Must not contain secrets."
+    },
+    "max_turns": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Hard cap on agentic turns. Maps to --max-turns. Exceeding it yields result.subtype == \"error_max_turns\"."
+    },
+    "max_budget_usd": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Hard cap on spend in USD. Maps to --max-budget-usd. Exceeding it yields result.subtype == \"error_max_budget_usd\"."
+    }
+  }
+}
