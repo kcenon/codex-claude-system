@@ -227,14 +227,14 @@ clean_summary() {
   # and horizontal-rule closers. Taking the literal first line captures those
   # decorations (observed in phase-3a-readonly-oauth pilot). Skip box-drawing
   # lines and star-prefixed headers; emit the first line of real prose.
-  python3 - <<'PYEOF'
+  python3 -c '
 import sys, re
 text = sys.stdin.read()
 if not text.strip():
     print("(no agent_message)")
     sys.exit(0)
-star_re = re.compile(r'^`?[★☆]')
-deco_re = re.compile(r'^`?[─-▟\s]+`?$')
+star_re = re.compile(r"^`?[★☆]")
+deco_re = re.compile(r"^`?[─-▟\s]+`?$")
 for raw in text.splitlines():
     line = raw.strip()
     if not line:
@@ -244,7 +244,7 @@ for raw in text.splitlines():
     print(line)
     sys.exit(0)
 print("(no agent_message)")
-PYEOF
+'
 }
 
 sanitize_argv() {
