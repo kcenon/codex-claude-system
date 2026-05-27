@@ -193,6 +193,18 @@ build_argv() {
   ARGV+=("$PROMPT_TEXT")
 }
 
+resolve_workspace() {
+  # The task spec's `workspace` field was advisory in the initial pilot:
+  # the subprocess inherited the wrapper's CWD instead of cd'ing into
+  # spec.workspace, which masked the defect in T-0001 (wrapper CWD happened
+  # to equal spec.workspace). Resolve to an absolute path and verify the
+  # directory exists before handing it to the cd subshell.
+  local p="$1"
+  [[ -n "$p" ]]   || die "Task spec workspace is empty; required by task-spec schema."
+  [[ -d "$p" ]]  || die "Task spec workspace does not exist or is not a directory: $p"
+  ( cd "$p" && pwd )
+}
+
 clean_summary() {
   # Explanatory output style decorates responses with "★ Insight ───" banners
   # and horizontal-rule closers. Taking the literal first line captures those
@@ -277,11 +289,14 @@ fi
 assert_auth_env
 (( ALLOW_OAUTH )) && echo "    NOTE: --allow-oauth set — --bare is OMITTED; baseline determinism is not in force."
 
+WORKSPACE="$(resolve_workspace "$(spec_get '.workspace')")"
+echo "    workspace=$WORKSPACE"
+
 STDOUT_PATH="$TASK_RUN_DIR/stdout.json"
 STDERR_PATH="$TASK_RUN_DIR/stderr.log"
 echo "==> Spawning claude --bare -p"
 set +e
-"$CLAUDE_BIN" "${ARGV[@]}" > "$STDOUT_PATH" 2> "$STDERR_PATH"
+( cd "$WORKSPACE" && "$CLAUDE_BIN" "${ARGV[@]}" ) > "$STDOUT_PATH" 2> "$STDERR_PATH"
 EXIT_CODE=$?
 set -e
 STDOUT_BYTES=$(wc -c < "$STDOUT_PATH")

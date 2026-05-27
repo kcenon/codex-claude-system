@@ -241,16 +241,34 @@ function Get-SanitizedArgv {
     return @($sanitized)
 }
 
+function Resolve-WorkspacePath {
+    # The task spec's `workspace` field was advisory in the initial pilot:
+    # the subprocess inherited the wrapper's CWD instead of cd'ing into
+    # spec.workspace, which masked the defect in T-0001 (wrapper CWD happened
+    # to equal spec.workspace). Resolve to an absolute path and verify the
+    # directory exists before handing it to ProcessStartInfo.WorkingDirectory.
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "Task spec workspace is empty; required by task-spec schema."
+    }
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        throw "Task spec workspace does not exist or is not a directory: $Path"
+    }
+    return (Resolve-Path -LiteralPath $Path).Path
+}
+
 function Invoke-ClaudeWorker {
     param(
         [string]$Bin,
         [string[]]$Argv,
+        [string]$WorkingDirectory,
         [string]$StdoutPath,
         [string]$StderrPath
     )
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName               = $Bin
+    $psi.WorkingDirectory       = $WorkingDirectory
     $psi.UseShellExecute        = $false
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError  = $true
@@ -422,10 +440,13 @@ function Invoke-Main {
         Write-Host "    NOTE: -AllowOAuth set — --bare is OMITTED; baseline determinism is not in force."
     }
 
+    $workspace = Resolve-WorkspacePath $spec.workspace
+    Write-Host "    workspace=$workspace"
+
     $stdoutPath = Join-Path $taskRunDir "stdout.json"
     $stderrPath = Join-Path $taskRunDir "stderr.log"
     Write-Host "==> Spawning claude --bare -p"
-    $invocation = Invoke-ClaudeWorker -Bin $ClaudeBin -Argv $argv -StdoutPath $stdoutPath -StderrPath $stderrPath
+    $invocation = Invoke-ClaudeWorker -Bin $ClaudeBin -Argv $argv -WorkingDirectory $workspace -StdoutPath $stdoutPath -StderrPath $stderrPath
     Write-Host "    exit=$($invocation.ExitCode)  stdout-bytes=$($invocation.Stdout.Length)  stderr-bytes=$($invocation.Stderr.Length)"
 
     $claudeResult = ConvertFrom-ClaudeJson -JsonText $invocation.Stdout
