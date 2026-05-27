@@ -174,6 +174,23 @@ build_argv() {
   ARGV+=("--permission-mode" "$(spec_get '.permission_mode')")
   ARGV+=("--no-session-persistence")
 
+  # Forward spec.output_schema (a file path) as --json-schema <content>.
+  # Schema-fail surfaces as result.subtype == "error_max_structured_output_retries";
+  # the worker-result.schema.json enum already accepts that value and the
+  # status fall-through marks it as "failed" without extra branching.
+  local output_schema_path
+  output_schema_path="$(spec_get '.output_schema')"
+  if [[ -n "$output_schema_path" ]]; then
+    case "$output_schema_path" in
+      /*|[A-Za-z]:/*|[A-Za-z]:\\*) ;;
+      *) output_schema_path="$REPO_ROOT/$output_schema_path" ;;
+    esac
+    [[ -f "$output_schema_path" ]] || die "output_schema file not found: $output_schema_path"
+    local schema_text
+    schema_text="$(cat "$output_schema_path")"
+    ARGV+=("--json-schema" "$schema_text")
+  fi
+
   local tools
   tools="$(jq -r '.tools // [] | join(",")' "$TASK_SPEC_PATH")"
   [[ -n "$tools" ]] && ARGV+=("--tools" "$tools")

@@ -197,6 +197,22 @@ function Build-ClaudeArgv {
     $argv.Add("--permission-mode"); $argv.Add([string](Get-OrDefault $Spec 'permission_mode' "default"))
     $argv.Add("--no-session-persistence")
 
+    # Forward spec.output_schema (a file path) as --json-schema <content>.
+    # Schema-fail surfaces as result.subtype == "error_max_structured_output_retries";
+    # the worker-result.schema.json enum already accepts that value and the
+    # status fall-through marks it as "failed" without extra branching.
+    $outputSchemaPath = [string](Get-OrDefault $Spec 'output_schema' "")
+    if ($outputSchemaPath) {
+        if (-not [System.IO.Path]::IsPathRooted($outputSchemaPath)) {
+            $outputSchemaPath = Join-Path $RepoRoot $outputSchemaPath
+        }
+        if (-not (Test-Path -LiteralPath $outputSchemaPath -PathType Leaf)) {
+            throw "output_schema file not found: $outputSchemaPath"
+        }
+        $schemaText = Get-Content -LiteralPath $outputSchemaPath -Raw
+        $argv.Add("--json-schema"); $argv.Add($schemaText)
+    }
+
     $tools = @(Get-OrDefault $Spec 'tools' @())
     if ($tools.Count -gt 0) {
         $argv.Add("--tools"); $argv.Add(($tools -join ","))
