@@ -6,6 +6,32 @@ This document defines the input/output contract Codex uses to dispatch a
 Claude Code worker, and the operational runbook for the wrapper that turns
 that contract into a concrete `claude --bare -p` invocation.
 
+## Implementation status
+
+The contract below is the **target** design. Phase 3a has landed a subset; the rest is Phase 3b or later. Both wrappers (`scripts/run-worker.{ps1,sh}`) implement the same Implemented-today column.
+
+| Capability | Status | Notes |
+| --- | --- | --- |
+| Task spec schema validation | Implemented | Both wrappers reject specs that fail `schemas/task-spec.schema.json`. |
+| Permission envelope (`--permission-mode`, `--tools`, `--allowedTools`, `--disallowedTools`) | Implemented | Forwarded verbatim from the spec. |
+| `--session-id`, `--max-turns`, `--max-budget-usd`, `--no-session-persistence` | Implemented | Forwarded when present in the spec. |
+| `--bare` baseline (`ANTHROPIC_API_KEY`-mode) | Implemented but **not yet exercised** | The Phase 3a pilot ran via `-AllowOAuth` (subscription) so `argv.json` did not contain `--bare`. Baseline re-run is the first Phase 3b task. |
+| `--output-format json` single-shot result | Implemented | `stdout.json` is the parsed final result event. |
+| `--output-format stream-json`, `events.jsonl`, `--include-hook-events`, `--include-partial-messages` | **Not yet** | Phase 3b. |
+| Result schema validation against `worker-result.schema.json` | Implemented | Wrapper-side; runs after status determination. |
+| `--json-schema` forwarding from `output_schema` field | **Not yet** | Spec field is accepted; wrappers do not forward. |
+| Workspace enforcement (`ProcessStartInfo.WorkingDirectory` / `cd`) | **Not yet** | `workspace` field is advisory; the subprocess inherits the wrapper's CWD. |
+| `runs/<task_id>/` artifact layout | Implemented for `task.json`, `prompt.txt`, `argv.json`, `stdout.json`, `stderr.log`, `result.json` | `events.jsonl`, `diff.patch`, `verification.log` are absent in single-shot read-only runs. |
+| Verification commands execution | Implemented | Loop runs each command and records `exit_code`. |
+| Worktree creation for write tasks (`--worktree <name>`) | **Not yet** | Pilot is read-only. |
+| `changed_files` reconciliation against actual `git diff` | **Not yet** | `changed_files` is always `[]` in Phase 3a. |
+| Path / secret leak verification (forbidden-path access, secret-pattern scan) | **Not yet** | Prompt-side wording only; no programmatic check. |
+| Sandbox enforcement (Codex / Claude sandbox at OS level) | **Not on Windows** | Claude sandbox requires macOS / Linux / WSL2. Pilot stderr records `"sandbox is enabled but windows is not supported"`. |
+| Result-summary first-line extraction | Implemented with **known defect** | When the worker leads with `★ Insight ───` prose, the header becomes the summary. See [`../pilots/phase-3a-readonly-oauth.md`](../pilots/phase-3a-readonly-oauth.md). |
+| Retries / format-repair / max-budget escalation | **Not yet** | Phase 3a is single-shot, no retries. |
+
+Everything below this section describes the *target* contract. Treat unmarked items as Phase 3b or later, and consult the table above before assuming a behavior is live.
+
 ## Worker calling contract
 
 Codex never throws a bare natural-language instruction at a worker; every
@@ -32,26 +58,26 @@ invocation carries a structured spec. The required input fields are:
 ## Wrapper flow
 
 ```text
-1. Validate the task spec against schemas/task-spec.schema.json.
-2. Prepare workspace (existing checkout, scratch dir, or git worktree).
-3. Translate allowed_paths / forbidden_paths into Claude permission rules
-   (allow/deny entries plus additionalDirectories).
-4. Render the Claude prompt from the template, injecting handoff_notes.
-5. Spawn `claude --bare -p` with --output-format stream-json (or json for
-   small tasks), --session-id, --permission-mode, --tools, --allowedTools,
+1. Validate the task spec against schemas/task-spec.schema.json.            [Phase 3a: done]
+2. Prepare workspace (existing checkout, scratch dir, or git worktree).     [Phase 3b: not yet — workspace field is advisory in Phase 3a]
+3. Translate allowed_paths / forbidden_paths into Claude permission rules   [Phase 3a: partial — values pass through prompt + --allowedTools/--disallowedTools;
+   (allow/deny entries plus additionalDirectories).                          no additionalDirectories translation]
+4. Render the Claude prompt from the template, injecting handoff_notes.     [Phase 3a: done]
+5. Spawn `claude --bare -p` with --output-format stream-json (or json for   [Phase 3a: --output-format json only; baseline --bare not yet exercised
+   small tasks), --session-id, --permission-mode, --tools, --allowedTools,    (pilot ran in OAuth mode). Phase 3b: stream-json + include-hook-events + partial messages]
    --disallowedTools, --max-turns, --max-budget-usd.
-6. Tee stdout (NDJSON event stream) to runs/<task_id>/events.jsonl;
-   capture stderr to runs/<task_id>/stderr.log.
-7. On the final `result` event, parse session_id, subtype, result text,
+6. Tee stdout (NDJSON event stream) to runs/<task_id>/events.jsonl;         [Phase 3b: events.jsonl not produced in Phase 3a (json mode only).
+   capture stderr to runs/<task_id>/stderr.log.                               stderr.log: Phase 3a done]
+7. On the final `result` event, parse session_id, subtype, result text,     [Phase 3a: done (json mode); structured_output forwarding awaits Phase 3b]
    structured_output (if --json-schema was used), total_cost_usd,
    usage, terminal_reason, and permission_denials.
-8. Validate the result against output_schema. On failure:
-   - if subtype == "error_max_structured_output_retries", record the
-     schema-failure signal and do not retry blindly.
+8. Validate the result against output_schema. On failure:                   [Phase 3a: validates against worker-result.schema.json only;
+   - if subtype == "error_max_structured_output_retries", record the          per-task output_schema is accepted in spec but not forwarded as --json-schema.
+     schema-failure signal and do not retry blindly.                          Retry-on-failure is Phase 3b.]
    - otherwise, attempt one "format repair" retry only.
-9. Collect git diff inside the workspace into runs/<task_id>/diff.patch.
-10. Run verification_commands, recording exit codes.
-11. Build the normalized result.json and hand it to the Codex aggregator.
+9. Collect git diff inside the workspace into runs/<task_id>/diff.patch.    [Phase 3b: not yet — pilot is read-only, changed_files is always []]
+10. Run verification_commands, recording exit codes.                        [Phase 3a: done]
+11. Build the normalized result.json and hand it to the Codex aggregator.   [Phase 3a: result.json built and schema-validated; the aggregator side is Phase 3b]
 ```
 
 ## Prompt template
@@ -261,8 +287,7 @@ codex-claude-system/
     verify-result.sh
 ```
 
-The `runs/`, `schemas/`, and `scripts/` directories do not yet exist; this
-layout is what the implementation should produce.
+Phase 3a produces the subset of this layout that read-only single-shot runs need: `task.json`, `prompt.txt`, `argv.json`, `stdout.json`, `stderr.log`, `result.json`. The wrappers do **not** yet emit `events.jsonl` (stream-json is Phase 3b), `diff.patch` (no write tasks yet), or `verification.log` for fixtures with empty `verification_commands`. `runs/` (PowerShell wrapper output) and `runs-sh/` (Bash wrapper output) are both `.gitignore`d in the current repo; the curated, tracked audit of the first pilot lives in [`../pilots/phase-3a-readonly-oauth.md`](../pilots/phase-3a-readonly-oauth.md).
 
 ## Codex aggregator checklist
 
@@ -315,7 +340,7 @@ is attempted:
 
 1. Run a single read-only worker with `claude --bare -p --output-format json`
    against a small in-repo question. Confirm the result schema is parsed
-   end-to-end.
+   end-to-end. **(Phase 3a status: done as an OAuth-mode pilot — `T-0001` — under both PowerShell and Bash wrappers. The baseline `--bare` + `ANTHROPIC_API_KEY` re-run is the first Phase 3b task; see [`../pilots/phase-3a-readonly-oauth.md`](../pilots/phase-3a-readonly-oauth.md).)**
 2. Save the worker's result JSON and walk the Codex aggregator through
    parsing it.
 3. Run a single write task inside one worktree, adding a small test.

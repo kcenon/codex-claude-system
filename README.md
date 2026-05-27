@@ -1,6 +1,6 @@
 # codex-claude-system
 
-> Design package for a system in which **Codex CLI acts as the orchestrator and Claude Code CLI acts as the worker**. Current phase: investigation references (`docs/references/`) + initial design proposals (`docs/design/`). No runtime code yet.
+> Design package for a system in which **Codex CLI acts as the orchestrator and Claude Code CLI acts as the worker**. Current phase: **Phase 3a — read-only single-shot wrapper landed**. The first pilot (`T-0001`, read-only) ran successfully under OAuth-mode (non-`--bare`) on Windows; the baseline `--bare` + `ANTHROPIC_API_KEY` contract has **not** yet been verified. Investigation references (`docs/references/`) and initial design proposals (`docs/design/`) remain frozen as the audit anchor.
 
 ---
 
@@ -10,7 +10,8 @@
 | --- | --- | --- |
 | 1. Reference investigation | Done (2026-05-27) | `docs/references/` (source index, overview, and four core reports) |
 | 2. Initial design proposal | Done (2026-05-27) | `docs/design/` (architecture, security, worker contracts) |
-| 3. Pilot implementation | Not started | — |
+| 3a. Pilot — read-only single-shot wrapper | Done; OAuth-mode pilot succeeded. Baseline `--bare` + API key run **not yet verified**. | `schemas/`, `scripts/run-worker.{ps1,sh}`, `fixtures/T-0001.task.json`; ignored `runs/`, `runs-sh/` artifacts; audit at [`docs/pilots/phase-3a-readonly-oauth.md`](docs/pilots/phase-3a-readonly-oauth.md) |
+| 3b. Pilot — stream-json, diff/path verification, worktree write tasks | Not started | — |
 | 4. Production hardening | Not started | — |
 
 ---
@@ -20,18 +21,29 @@
 ```
 codex-claude-system/
 ├── README.md                                      ← you are here
-└── docs/
-    ├── references/                                ← external facts (frozen, dated)
-    │   ├── 00-local-environment.md                ← local CLI snapshot + URL index
-    │   ├── 00-overview.md                         ← reading order, key findings, open questions
-    │   ├── 01-codex-cli.md                        ← Codex CLI surface (orchestrator role)
-    │   ├── 02-claude-code-cli.md                  ← Claude Code CLI surface (worker role)
-    │   ├── 03-orchestration-patterns.md           ← multi-agent CLI patterns + prior art
-    │   └── 04-integration-examples.md             ← Codex + Claude integration case studies
-    └── design/                                    ← system proposals (evolving)
-        ├── architecture.md                        ← baseline architecture + alternatives
-        ├── security.md                            ← combined permission/sandbox/secret policy
-        └── worker-contracts.md                    ← worker calling contract + pilot runbook
+├── docs/
+│   ├── references/                                ← external facts (frozen, dated)
+│   │   ├── 00-local-environment.md                ← local CLI snapshot + URL index
+│   │   ├── 00-overview.md                         ← reading order, key findings, open questions
+│   │   ├── 01-codex-cli.md                        ← Codex CLI surface (orchestrator role)
+│   │   ├── 02-claude-code-cli.md                  ← Claude Code CLI surface (worker role)
+│   │   ├── 03-orchestration-patterns.md           ← multi-agent CLI patterns + prior art
+│   │   └── 04-integration-examples.md             ← Codex + Claude integration case studies
+│   ├── design/                                    ← system proposals (evolving)
+│   │   ├── architecture.md                        ← baseline architecture + alternatives
+│   │   ├── security.md                            ← combined permission/sandbox/secret policy
+│   │   └── worker-contracts.md                    ← worker calling contract + pilot runbook
+│   └── pilots/                                    ← tracked pilot audit notes
+│       └── phase-3a-readonly-oauth.md             ← T-0001 OAuth-mode pilot fact record
+├── schemas/                                       ← Phase 3a runtime contracts
+│   ├── task-spec.schema.json
+│   └── worker-result.schema.json
+├── scripts/                                       ← Phase 3a wrappers (read-only single-shot)
+│   ├── run-worker.ps1                             ← PowerShell 7+ wrapper (Windows-first)
+│   └── run-worker.sh                              ← POSIX bash parity wrapper
+├── fixtures/                                      ← canonical task specs
+│   └── T-0001.task.json                           ← first read-only fixture
+└── (runs/, runs-sh/)                              ← .gitignored pilot artifacts; never committed
 ```
 
 References and design are deliberately separated:
@@ -69,6 +81,8 @@ This package is the **single source of truth for the investigation that produced
 | Consolidated Open Questions | [`docs/references/00-overview.md` §5](docs/references/00-overview.md) |
 
 Any claim that cites a live data source (GitHub issue state, repo stars, release dates, blog publication dates) is point-in-time as of the investigation date. Re-verify before quoting in a design decision.
+
+> **Local CLI drift since the snapshot.** The Phase 3a pilot ran on a Windows machine where `codex --version` reports `codex-cli 0.134.0` and `claude --version` reports `2.1.150 (Claude Code)`. The Codex CLI has drifted one patch ahead of the snapshot table; Claude Code matches. The references are deliberately not retroactively updated — treat `0.133.0` as the investigation anchor and re-verify specific Codex behavior against the locally installed version before relying on it.
 
 ---
 
@@ -109,17 +123,28 @@ The investigation produced a few process lessons that should carry into the pilo
 
 ---
 
-## What's Not Here Yet
+## Implementation Status
 
-The following are explicitly *out of scope for this phase* — the package is investigation + proposal, not implementation. Items below will appear in later phases.
+The package is no longer pure investigation + proposal. Phase 3a — a read-only single-shot worker wrapper — has landed. Phase 3b and the orchestrator side remain out of scope until promoted.
 
-- Runtime code (orchestrator script, worker wrapper, aggregator)
-- JSON Schema files (`schemas/worker-result.schema.json`, `schemas/task-spec.schema.json`)
-- Executable scripts (`scripts/run-worker.sh`, etc.)
-- Run-history directory (`runs/<task-id>/{task.json,prompt.txt,stdout.json,...}`)
-- CI configuration
-- Test suites
-- Monitoring / cost-tracking / budget enforcement implementation
-- Pilot execution logs
+**Implemented in Phase 3a (this revision):**
 
-When pilot implementation starts, the directory structure proposed in [`docs/design/worker-contracts.md`](docs/design/worker-contracts.md) is the planned target layout.
+- JSON Schemas: `schemas/task-spec.schema.json`, `schemas/worker-result.schema.json` — consumed by the wrappers at dispatch and at result normalization.
+- Wrappers: `scripts/run-worker.ps1` (PowerShell 7+, Windows-first) and `scripts/run-worker.sh` (POSIX bash parity). Read-only, single-shot, no retries. Both validate input and output against the schemas.
+- Fixture: `fixtures/T-0001.task.json` (read-only `docs/references/` enumeration).
+- Run-history layout: `runs/<task_id>/{task.json,prompt.txt,argv.json,stdout.json,stderr.log,result.json}` produced under `runs/` (PowerShell) and `runs-sh/` (Bash). Both directories are `.gitignore`d; the curated audit record lives in `docs/pilots/`.
+- Pilot result: T-0001 succeeded under both wrappers; the PowerShell run was executed via `-AllowOAuth` (subscription OAuth), so its `argv.json` does **not** contain `--bare`. The baseline contract (`--bare` + `ANTHROPIC_API_KEY`, sandbox enforcement) is not yet verified. See [`docs/pilots/phase-3a-readonly-oauth.md`](docs/pilots/phase-3a-readonly-oauth.md) for the full pilot audit.
+
+**Still out of scope (Phase 3b and beyond):**
+
+- Baseline contract validation: re-run T-0001 with `ANTHROPIC_API_KEY` + `--bare` and confirm `argv.json` contains `--bare`.
+- Sandbox enforcement: re-run on WSL2 / Linux / container so the `"sandbox is enabled but windows is not supported"` warning no longer applies. Orthogonal to the auth-mode axis.
+- Stream-json output: `--output-format stream-json`, `events.jsonl`, `--include-hook-events`, `--include-partial-messages`. The wrappers currently use `--output-format json` only.
+- Wrapper workspace enforcement: the `workspace` field is currently advisory; `ProcessStartInfo.WorkingDirectory` is not set in the PowerShell wrapper.
+- Output-schema enforcement: `output_schema` is accepted in the task spec but the wrappers do not forward it via `--json-schema`.
+- Write tasks: per-task git worktree creation (`--worktree <name>`), diff capture (`diff.patch`), and `changed_files` reconciliation against the actual diff.
+- Path/diff verification: forbidden-path leak detection, allowed-path enforcement of `changed_files`, secret-pattern scan on stdout/events/result.
+- Result-summary extraction: both wrappers currently take the first line of `result.result`, which captures `★ Insight ───…` headers when the worker leads with prose decoration.
+- Orchestrator side: the Codex `exec` planner, the aggregator that consumes `result.json`, retry/escalation policy, CI configuration, monitoring, and budget enforcement.
+
+The full target directory structure remains the layout proposed in [`docs/design/worker-contracts.md`](docs/design/worker-contracts.md), which now marks Implemented-today vs Phase 3b items inline.
