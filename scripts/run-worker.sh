@@ -193,6 +193,31 @@ build_argv() {
   ARGV+=("$PROMPT_TEXT")
 }
 
+clean_summary() {
+  # Explanatory output style decorates responses with "★ Insight ───" banners
+  # and horizontal-rule closers. Taking the literal first line captures those
+  # decorations (observed in phase-3a-readonly-oauth pilot). Skip box-drawing
+  # lines and star-prefixed headers; emit the first line of real prose.
+  python3 - <<'PYEOF'
+import sys, re
+text = sys.stdin.read()
+if not text.strip():
+    print("(no agent_message)")
+    sys.exit(0)
+star_re = re.compile(r'^`?[★☆]')
+deco_re = re.compile(r'^`?[─-▟\s]+`?$')
+for raw in text.splitlines():
+    line = raw.strip()
+    if not line:
+        continue
+    if star_re.match(line) or deco_re.match(line):
+        continue
+    print(line)
+    sys.exit(0)
+print("(no agent_message)")
+PYEOF
+}
+
 sanitize_argv() {
   # Reads ARGV, prints a JSON array of redacted tokens to stdout.
   local masked=()
@@ -313,7 +338,7 @@ NEEDS_REVIEW="false"
 
 # Build normalized result.json.
 RESULT_PATH="$TASK_RUN_DIR/result.json"
-SUMMARY="$(printf '%s' "$RESULT_TEXT" | head -n 1)"
+SUMMARY="$(printf '%s' "$RESULT_TEXT" | clean_summary)"
 [[ -z "$SUMMARY" ]] && SUMMARY="(no agent_message)"
 
 jq -n \

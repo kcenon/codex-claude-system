@@ -287,6 +287,24 @@ function ConvertFrom-ClaudeJson {
     }
 }
 
+function Get-CleanSummary {
+    # Explanatory output style decorates responses with "★ Insight ───" banners
+    # and horizontal-rule closers. Taking the literal first line of result.result
+    # captures those decorations as the summary (observed in phase-3a-readonly-oauth
+    # pilot). Skip box-drawing-only lines and ★/☆-prefixed headers; return the
+    # first line of real prose.
+    param([string]$Text)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return "(no agent_message)" }
+    foreach ($raw in $Text -split "`r?`n") {
+        $line = $raw.Trim()
+        if (-not $line) { continue }
+        if ($line -match '^`?[★☆]') { continue }
+        if ($line -match '^`?[─-▟\s]+`?$') { continue }
+        return $line
+    }
+    return "(no agent_message)"
+}
+
 function New-NormalizedResult {
     param(
         $Spec,
@@ -325,7 +343,7 @@ function New-NormalizedResult {
         task_id            = $Spec.task_id
         session_id         = $sessionId
         status             = $status
-        summary            = if ($resultText) { ($resultText -split "`n")[0] } else { "(no agent_message)" }
+        summary            = Get-CleanSummary $resultText
         changed_files      = @()  # pilot: read-only, no diff path
         commands_run       = @()  # populated by Invoke-VerificationCommands
         risks              = @()
