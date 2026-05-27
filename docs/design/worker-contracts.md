@@ -19,15 +19,15 @@ The contract below is the **target** design. Phase 3a has landed a subset; the r
 | `--output-format json` single-shot result | Implemented | `stdout.json` is the parsed final result event. |
 | `--output-format stream-json`, `events.jsonl`, `--include-hook-events`, `--include-partial-messages` | **Not yet** | Phase 3b. |
 | Result schema validation against `worker-result.schema.json` | Implemented | Wrapper-side; runs after status determination. |
-| `--json-schema` forwarding from `output_schema` field | **Not yet** | Spec field is accepted; wrappers do not forward. |
-| Workspace enforcement (`ProcessStartInfo.WorkingDirectory` / `cd`) | **Not yet** | `workspace` field is advisory; the subprocess inherits the wrapper's CWD. |
+| `--json-schema` forwarding from `output_schema` field | Implemented | `spec.output_schema` (a file path, resolved relative to wrapper repo root if not absolute) is read and forwarded via `--json-schema <content>`. Schema-failure subtype `error_max_structured_output_retries` is already accepted by `worker-result.schema.json`'s enum, and the existing status fall-through marks it as `failed` without extra branching. Retry policy is intentionally deferred — Claude has already exhausted internal retries before emitting this subtype. |
+| Workspace enforcement (`ProcessStartInfo.WorkingDirectory` / `cd`) | Implemented | `spec.workspace` is validated (must exist as a directory) and resolved to an absolute path before being set on the subprocess. PowerShell uses `ProcessStartInfo.WorkingDirectory`; Bash uses a `cd` subshell. Validation runs after the dry-run exit, so `-DryRun` / `--dry-run` still inspects argv without checking the environment. |
 | `runs/<task_id>/` artifact layout | Implemented for `task.json`, `prompt.txt`, `argv.json`, `stdout.json`, `stderr.log`, `result.json` | `events.jsonl`, `diff.patch`, `verification.log` are absent in single-shot read-only runs. |
 | Verification commands execution | Implemented | Loop runs each command and records `exit_code`. |
 | Worktree creation for write tasks (`--worktree <name>`) | **Not yet** | Pilot is read-only. |
 | `changed_files` reconciliation against actual `git diff` | **Not yet** | `changed_files` is always `[]` in Phase 3a. |
 | Path / secret leak verification (forbidden-path access, secret-pattern scan) | **Not yet** | Prompt-side wording only; no programmatic check. |
 | Sandbox enforcement (Codex / Claude sandbox at OS level) | **Not on Windows** | Claude sandbox requires macOS / Linux / WSL2. Pilot stderr records `"sandbox is enabled but windows is not supported"`. |
-| Result-summary first-line extraction | Implemented with **known defect** | When the worker leads with `★ Insight ───` prose, the header becomes the summary. See [`../pilots/phase-3a-readonly-oauth.md`](../pilots/phase-3a-readonly-oauth.md). |
+| Result-summary first-line extraction | Implemented | Decorative leading lines are skipped before taking the first prose line: `★`/`☆`-prefixed headers (with or without backtick wrap) and lines composed only of Box Drawing / Block Elements (U+2500-U+259F), whitespace, and optional backticks. The OAuth-pilot defect ([`../pilots/phase-3a-readonly-oauth.md` §4](../pilots/phase-3a-readonly-oauth.md)) is closed; behavior parity verified between PowerShell and Python regex engines. |
 | Retries / format-repair / max-budget escalation | **Not yet** | Phase 3a is single-shot, no retries. |
 
 Everything below this section describes the *target* contract. Treat unmarked items as Phase 3b or later, and consult the table above before assuming a behavior is live.
@@ -59,7 +59,8 @@ invocation carries a structured spec. The required input fields are:
 
 ```text
 1. Validate the task spec against schemas/task-spec.schema.json.            [Phase 3a: done]
-2. Prepare workspace (existing checkout, scratch dir, or git worktree).     [Phase 3b: not yet — workspace field is advisory in Phase 3a]
+2. Prepare workspace (existing checkout, scratch dir, or git worktree).     [Phase 3a: spec.workspace is validated and used as the subprocess CWD;
+                                                                              per-task git worktree creation remains Phase 3b]
 3. Translate allowed_paths / forbidden_paths into Claude permission rules   [Phase 3a: partial — values pass through prompt + --allowedTools/--disallowedTools;
    (allow/deny entries plus additionalDirectories).                          no additionalDirectories translation]
 4. Render the Claude prompt from the template, injecting handoff_notes.     [Phase 3a: done]
@@ -71,9 +72,9 @@ invocation carries a structured spec. The required input fields are:
 7. On the final `result` event, parse session_id, subtype, result text,     [Phase 3a: done (json mode); structured_output forwarding awaits Phase 3b]
    structured_output (if --json-schema was used), total_cost_usd,
    usage, terminal_reason, and permission_denials.
-8. Validate the result against output_schema. On failure:                   [Phase 3a: validates against worker-result.schema.json only;
-   - if subtype == "error_max_structured_output_retries", record the          per-task output_schema is accepted in spec but not forwarded as --json-schema.
-     schema-failure signal and do not retry blindly.                          Retry-on-failure is Phase 3b.]
+8. Validate the result against output_schema. On failure:                   [Phase 3a: validates against worker-result.schema.json; per-task
+   - if subtype == "error_max_structured_output_retries", record the          output_schema is forwarded as --json-schema. Retry-on-failure is
+     schema-failure signal and do not retry blindly.                          Phase 3b.]
    - otherwise, attempt one "format repair" retry only.
 9. Collect git diff inside the workspace into runs/<task_id>/diff.patch.    [Phase 3b: not yet — pilot is read-only, changed_files is always []]
 10. Run verification_commands, recording exit codes.                        [Phase 3a: done]

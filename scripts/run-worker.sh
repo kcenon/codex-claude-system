@@ -174,6 +174,23 @@ build_argv() {
   ARGV+=("--permission-mode" "$(spec_get '.permission_mode')")
   ARGV+=("--no-session-persistence")
 
+  # Forward spec.output_schema (a file path) as --json-schema <content>.
+  # Schema-fail surfaces as result.subtype == "error_max_structured_output_retries";
+  # the worker-result.schema.json enum already accepts that value and the
+  # status fall-through marks it as "failed" without extra branching.
+  local output_schema_path
+  output_schema_path="$(spec_get '.output_schema')"
+  if [[ -n "$output_schema_path" ]]; then
+    case "$output_schema_path" in
+      /*|[A-Za-z]:/*|[A-Za-z]:\\*) ;;
+      *) output_schema_path="$REPO_ROOT/$output_schema_path" ;;
+    esac
+    [[ -f "$output_schema_path" ]] || die "output_schema file not found: $output_schema_path"
+    local schema_text
+    schema_text="$(cat "$output_schema_path")"
+    ARGV+=("--json-schema" "$schema_text")
+  fi
+
   local tools
   tools="$(jq -r '.tools // [] | join(",")' "$TASK_SPEC_PATH")"
   [[ -n "$tools" ]] && ARGV+=("--tools" "$tools")
@@ -191,6 +208,43 @@ build_argv() {
   [[ -n "$mb"  ]] && ARGV+=("--max-budget-usd" "$mb")
 
   ARGV+=("$PROMPT_TEXT")
+}
+
+resolve_workspace() {
+  # The task spec's `workspace` field was advisory in the initial pilot:
+  # the subprocess inherited the wrapper's CWD instead of cd'ing into
+  # spec.workspace, which masked the defect in T-0001 (wrapper CWD happened
+  # to equal spec.workspace). Resolve to an absolute path and verify the
+  # directory exists before handing it to the cd subshell.
+  local p="$1"
+  [[ -n "$p" ]]   || die "Task spec workspace is empty; required by task-spec schema."
+  [[ -d "$p" ]]  || die "Task spec workspace does not exist or is not a directory: $p"
+  ( cd "$p" && pwd )
+}
+
+clean_summary() {
+  # Explanatory output style decorates responses with "★ Insight ───" banners
+  # and horizontal-rule closers. Taking the literal first line captures those
+  # decorations (observed in phase-3a-readonly-oauth pilot). Skip box-drawing
+  # lines and star-prefixed headers; emit the first line of real prose.
+  python3 -c '
+import sys, re
+text = sys.stdin.read()
+if not text.strip():
+    print("(no agent_message)")
+    sys.exit(0)
+star_re = re.compile(r"^`?[★☆]")
+deco_re = re.compile(r"^`?[─-▟\s]+`?$")
+for raw in text.splitlines():
+    line = raw.strip()
+    if not line:
+        continue
+    if star_re.match(line) or deco_re.match(line):
+        continue
+    print(line)
+    sys.exit(0)
+print("(no agent_message)")
+'
 }
 
 sanitize_argv() {
@@ -252,11 +306,14 @@ fi
 assert_auth_env
 (( ALLOW_OAUTH )) && echo "    NOTE: --allow-oauth set — --bare is OMITTED; baseline determinism is not in force."
 
+WORKSPACE="$(resolve_workspace "$(spec_get '.workspace')")"
+echo "    workspace=$WORKSPACE"
+
 STDOUT_PATH="$TASK_RUN_DIR/stdout.json"
 STDERR_PATH="$TASK_RUN_DIR/stderr.log"
 echo "==> Spawning claude --bare -p"
 set +e
-"$CLAUDE_BIN" "${ARGV[@]}" > "$STDOUT_PATH" 2> "$STDERR_PATH"
+( cd "$WORKSPACE" && "$CLAUDE_BIN" "${ARGV[@]}" ) > "$STDOUT_PATH" 2> "$STDERR_PATH"
 EXIT_CODE=$?
 set -e
 STDOUT_BYTES=$(wc -c < "$STDOUT_PATH")
@@ -313,7 +370,7 @@ NEEDS_REVIEW="false"
 
 # Build normalized result.json.
 RESULT_PATH="$TASK_RUN_DIR/result.json"
-SUMMARY="$(printf '%s' "$RESULT_TEXT" | head -n 1)"
+SUMMARY="$(printf '%s' "$RESULT_TEXT" | clean_summary)"
 [[ -z "$SUMMARY" ]] && SUMMARY="(no agent_message)"
 
 jq -n \

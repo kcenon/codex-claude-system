@@ -197,6 +197,22 @@ function Build-ClaudeArgv {
     $argv.Add("--permission-mode"); $argv.Add([string](Get-OrDefault $Spec 'permission_mode' "default"))
     $argv.Add("--no-session-persistence")
 
+    # Forward spec.output_schema (a file path) as --json-schema <content>.
+    # Schema-fail surfaces as result.subtype == "error_max_structured_output_retries";
+    # the worker-result.schema.json enum already accepts that value and the
+    # status fall-through marks it as "failed" without extra branching.
+    $outputSchemaPath = [string](Get-OrDefault $Spec 'output_schema' "")
+    if ($outputSchemaPath) {
+        if (-not [System.IO.Path]::IsPathRooted($outputSchemaPath)) {
+            $outputSchemaPath = Join-Path $RepoRoot $outputSchemaPath
+        }
+        if (-not (Test-Path -LiteralPath $outputSchemaPath -PathType Leaf)) {
+            throw "output_schema file not found: $outputSchemaPath"
+        }
+        $schemaText = Get-Content -LiteralPath $outputSchemaPath -Raw
+        $argv.Add("--json-schema"); $argv.Add($schemaText)
+    }
+
     $tools = @(Get-OrDefault $Spec 'tools' @())
     if ($tools.Count -gt 0) {
         $argv.Add("--tools"); $argv.Add(($tools -join ","))
@@ -241,16 +257,34 @@ function Get-SanitizedArgv {
     return @($sanitized)
 }
 
+function Resolve-WorkspacePath {
+    # The task spec's `workspace` field was advisory in the initial pilot:
+    # the subprocess inherited the wrapper's CWD instead of cd'ing into
+    # spec.workspace, which masked the defect in T-0001 (wrapper CWD happened
+    # to equal spec.workspace). Resolve to an absolute path and verify the
+    # directory exists before handing it to ProcessStartInfo.WorkingDirectory.
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "Task spec workspace is empty; required by task-spec schema."
+    }
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        throw "Task spec workspace does not exist or is not a directory: $Path"
+    }
+    return (Resolve-Path -LiteralPath $Path).Path
+}
+
 function Invoke-ClaudeWorker {
     param(
         [string]$Bin,
         [string[]]$Argv,
+        [string]$WorkingDirectory,
         [string]$StdoutPath,
         [string]$StderrPath
     )
 
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName               = $Bin
+    $psi.WorkingDirectory       = $WorkingDirectory
     $psi.UseShellExecute        = $false
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError  = $true
@@ -285,6 +319,24 @@ function ConvertFrom-ClaudeJson {
     } catch {
         throw "Could not parse claude --output-format json stdout: $($_.Exception.Message)"
     }
+}
+
+function Get-CleanSummary {
+    # Explanatory output style decorates responses with "★ Insight ───" banners
+    # and horizontal-rule closers. Taking the literal first line of result.result
+    # captures those decorations as the summary (observed in phase-3a-readonly-oauth
+    # pilot). Skip box-drawing-only lines and ★/☆-prefixed headers; return the
+    # first line of real prose.
+    param([string]$Text)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return "(no agent_message)" }
+    foreach ($raw in $Text -split "`r?`n") {
+        $line = $raw.Trim()
+        if (-not $line) { continue }
+        if ($line -match '^`?[★☆]') { continue }
+        if ($line -match '^`?[─-▟\s]+`?$') { continue }
+        return $line
+    }
+    return "(no agent_message)"
 }
 
 function New-NormalizedResult {
@@ -325,7 +377,7 @@ function New-NormalizedResult {
         task_id            = $Spec.task_id
         session_id         = $sessionId
         status             = $status
-        summary            = if ($resultText) { ($resultText -split "`n")[0] } else { "(no agent_message)" }
+        summary            = Get-CleanSummary $resultText
         changed_files      = @()  # pilot: read-only, no diff path
         commands_run       = @()  # populated by Invoke-VerificationCommands
         risks              = @()
@@ -404,10 +456,13 @@ function Invoke-Main {
         Write-Host "    NOTE: -AllowOAuth set — --bare is OMITTED; baseline determinism is not in force."
     }
 
+    $workspace = Resolve-WorkspacePath $spec.workspace
+    Write-Host "    workspace=$workspace"
+
     $stdoutPath = Join-Path $taskRunDir "stdout.json"
     $stderrPath = Join-Path $taskRunDir "stderr.log"
     Write-Host "==> Spawning claude --bare -p"
-    $invocation = Invoke-ClaudeWorker -Bin $ClaudeBin -Argv $argv -StdoutPath $stdoutPath -StderrPath $stderrPath
+    $invocation = Invoke-ClaudeWorker -Bin $ClaudeBin -Argv $argv -WorkingDirectory $workspace -StdoutPath $stdoutPath -StderrPath $stderrPath
     Write-Host "    exit=$($invocation.ExitCode)  stdout-bytes=$($invocation.Stdout.Length)  stderr-bytes=$($invocation.Stderr.Length)"
 
     $claudeResult = ConvertFrom-ClaudeJson -JsonText $invocation.Stdout
