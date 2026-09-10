@@ -1,3 +1,5 @@
+> Status: archived 2026-09. No further maintenance; kept for reference.
+
 # codex-claude-system
 
 > Design package for a system in which **Codex CLI acts as the orchestrator and Claude Code CLI acts as the worker**. Current phase: **Phase 3a — read-only single-shot wrapper landed**. The first pilot (`T-0001`, read-only) ran successfully under OAuth-mode (non-`--bare`) on Windows; the baseline `--bare` + `ANTHROPIC_API_KEY` contract has **not** yet been verified. Investigation references (`docs/references/`) and initial design proposals (`docs/design/`) remain frozen as the audit anchor.
